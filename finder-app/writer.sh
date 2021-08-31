@@ -21,7 +21,7 @@ file_name=$(basename $writefile)
 # create directory, if it does not already exist
 if [ ! -d $directory_name ]
 then
-	mkdir -p "$directory_name"
+	mkdir -p $directory_name
 
 	if [ ! -d $directory_name ]
 	then

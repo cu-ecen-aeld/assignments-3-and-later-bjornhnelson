@@ -13,7 +13,7 @@ then
 fi
 
 # verify that the path is valid
-if [ ! -d "$filesdir" ]
+if [ ! -d $filesdir ]
 then
 	echo "ERROR: invalid search path"
 	exit 1
