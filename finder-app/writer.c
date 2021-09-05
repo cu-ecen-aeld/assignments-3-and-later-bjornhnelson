@@ -14,46 +14,48 @@ int main(int argc, char* argv[]) {
     char path[100];
     char* writestr;
     char* directory_name;
-    //char* file_name;
-    //char cur_directory[100];
-    FILE* curFile;
+    FILE* fp;
     struct stat st;
     int status;
 
     openlog(NULL, LOG_PERROR, LOG_USER);
 
+    // check command line arguments
     if (argc != 3) {
         syslog(LOG_ERR, "ERROR: invalid number of arguments\n");
         exit(EXIT_FAILURE);
     }
 
+    // get directory path without filename appended
     strcpy(path, argv[1]);
-    //printf("Path: %s\n", path);
     directory_name = dirname(argv[1]);
 
+    // verify that directory path exists
     if (stat(directory_name, &st) != 0) {
         syslog(LOG_ERR, "ERROR: path does not exist\n");
         exit(EXIT_FAILURE);
     }
 
-    
-    printf("Path: %s\n", path);
-    curFile = fopen(path, "w");
-    if (curFile == NULL) {
+    // open the file
+    fp = fopen(path, "w");
+    if (fp == NULL) {
         syslog(LOG_ERR, "ERROR: file could not be opened\n");
         exit(EXIT_FAILURE);
     }
 
+    // write to the file
     writestr = argv[2];
-    status = fwrite(writestr, sizeof(char), strlen(writestr), curFile);
+    status = fwrite(writestr, sizeof(char), strlen(writestr), fp);
     if (status == 0) {
         syslog(LOG_ERR, "ERROR: file could not be written to\n");
 	exit(EXIT_FAILURE);
     }
 
+    // debug info to syslog
     syslog(LOG_DEBUG, "Writing %s to %s\n", writestr, path);
 
-    status = fclose(curFile);
+    // close the file
+    status = fclose(fp);
     if (status != 0) {
         syslog(LOG_ERR, "ERROR: file could not be closed\n");
 	exit(EXIT_FAILURE);

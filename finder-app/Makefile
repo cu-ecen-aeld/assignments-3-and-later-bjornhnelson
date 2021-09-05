@@ -1,7 +1,7 @@
 CC = $(CROSS_COMPILE)gcc
 
-all: writer.c
-	$(CC) -Wall -Werror writer.c -o writer
+writer: writer.c
+	$(CC) -Wall -Werror -o writer writer.c
 
 clean:
 	rm -f writer *.o
