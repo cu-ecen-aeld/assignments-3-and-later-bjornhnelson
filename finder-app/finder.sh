@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Author: Bjorn Nelson
 
 # save command line arguments

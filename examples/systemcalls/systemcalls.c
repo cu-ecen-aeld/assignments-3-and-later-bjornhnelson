@@ -1,4 +1,10 @@
 #include "systemcalls.h"
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+
 
 /**
  * @param cmd the command to execute with system()
@@ -17,7 +23,15 @@ bool do_system(const char *cmd)
  *   or false() if it returned a failure
 */
 
+    if (cmd == NULL)
+        return false;
+
+    int status = system(cmd);
+
+    if (status == -1)
+        return false;
     return true;
+
 }
 
 /**
@@ -45,9 +59,6 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
 /*
  * TODO:
@@ -59,9 +70,32 @@ bool do_exec(int count, ...)
  *   
 */
 
-    va_end(args);
+    int status;
+    pid_t pid = fork();
 
+    if (pid == -1) {
+        perror("fork failure");
+        return false;
+    }
+    else if (pid == 0) {
+        execv(command[0], command);
+
+        perror("exec failure");
+        exit(-1);
+    }
+    else {
+        if (waitpid(pid, &status, 0) == -1) {
+            perror("waitpid failure");
+            return false;
+        }
+        else if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+            return false;
+        }
+    }
+
+    va_end(args);
     return true;
+
 }
 
 /**
@@ -80,10 +114,6 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
-
 
 /*
  * TODO
@@ -93,7 +123,47 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   
 */
 
+    int status;
+
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+
+    if (fd == -1) {
+        perror("open failure");
+        abort();
+    }
+
+    pid_t pid = fork();
+
+    if (pid == -1) {
+        perror("fork failure");
+        return false;
+    }
+    else if (pid == 0) {
+
+        if (dup2(fd, STDOUT_FILENO) < 0) {
+            perror("dup2 error");
+            return false;
+        }
+
+        close(fd);
+
+        execv(command[0], command);
+
+        perror("exec failure");
+        exit(-1);
+    }
+    else {
+        close(fd);
+
+        if (waitpid(pid, &status, 0) == -1) {
+            perror("waitpid failure");
+            return false;
+        }
+        else if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+            return false;
+        }
+    }
+
     va_end(args);
-    
     return true;
 }
