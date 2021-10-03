@@ -14,20 +14,18 @@
 #define PORT_NUM "9000"
 #define MAX_BACKLOG 10
 #define OUTPUT_FILE_PATH "/var/tmp/aesdsocketdata"
-#define BUF_SIZE 100
+#define MAX_BUF_SIZE 100
 
 // global variables
 int socket_num;
 int client_fd;
-int output_fd;
-char* recv_buf;
-char* send_buf;
+int file_fd;
 
 void handle_signals(int sig_num) {
     if ((sig_num == SIGINT) || (sig_num == SIGTERM)) {
         syslog(LOG_DEBUG, "Caught signal, exiting");
         close(socket_num);
-        close(output_fd);
+        close(file_fd);
 
         if (remove(OUTPUT_FILE_PATH) == -1) {
             perror("remove");
@@ -48,11 +46,8 @@ int main(int argc, char** argv) {
 
     struct sockaddr_in client_sockaddr;
     socklen_t client_addrlen = sizeof(struct sockaddr);
-    int recv_buf_size = BUF_SIZE;
-    int send_buf_size = recv_buf_size;
-    int buf_pos;
-    int num_bytes;
-    //off_t file_size;
+
+    long total_bytes = 0;
 
     openlog(NULL, 0, LOG_USER);
 
@@ -60,6 +55,68 @@ int main(int argc, char** argv) {
     if (argc == 2 && strncmp("-d", argv[1], 3) == 0) {
         daemon_flag = 1;
     }
+
+    // setup signal handlers
+    if (signal(SIGINT, handle_signals) == SIG_ERR) {
+        printf("SIGINT setup error\n");
+        return -1;
+    }
+    if (signal(SIGTERM, handle_signals) == SIG_ERR) {
+        printf("SIGTERM setup error\n");
+        return -1;
+    }
+
+    // setup signal masking (happens during recv and send)
+    sigset_t cur_set;
+    //sigset_t prev_set;
+    sigemptyset(&cur_set);
+    sigaddset(&cur_set, SIGINT);
+    sigaddset(&cur_set, SIGTERM);
+
+    printf("** Signals setup\n");
+
+    // setup addrinfo data structure
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = 0;
+
+    // initialize server_info data structure
+    status = getaddrinfo(NULL, PORT_NUM, &hints, &server_info);
+    if (status != 0) {
+        perror("getaddrinfo");
+        freeaddrinfo(server_info);
+        return -1;
+    }
+
+    // create socket
+    socket_num = socket(server_info->ai_family, server_info->ai_socktype, server_info->ai_protocol);
+    if (socket_num == -1) {
+        perror("socket");
+        return -1;
+    }
+
+    // reference: https://stackoverflow.com/questions/24194961/how-do-i-use-setsockoptso-reuseaddr
+    int optval = 1;
+    if (setsockopt(socket_num, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(int)) == -1) {
+        perror("setsockopt");
+        close(socket_num);
+        return -1;
+    }
+
+    printf("** socket() call\n");
+
+    // bind socket
+    status = bind(socket_num, server_info->ai_addr, server_info->ai_addrlen);
+    if (status != 0) {
+        perror("bind");
+        freeaddrinfo(server_info);
+        return -1;
+    }
+
+    freeaddrinfo(server_info);
+    printf("** bind() call\n");
 
     // set up daemon
     if (daemon_flag) {
@@ -98,88 +155,22 @@ int main(int argc, char** argv) {
     }
     printf("** Dameon setup\n");
 
-    // setup signal handlers
-    if (signal(SIGINT, handle_signals) == SIG_ERR) {
-        printf("SIGINT setup error\n");
-        return -1;
-    }
-    if (signal(SIGTERM, handle_signals) == SIG_ERR) {
-        printf("SIGTERM setup error\n");
-        return -1;
-    }
-
-    // setup signal masking (happens during recv and send)
-    sigset_t cur_set;
-    sigset_t prev_set;
-    sigemptyset(&cur_set);
-    sigaddset(&cur_set, SIGINT);
-    sigaddset(&cur_set, SIGTERM);
-
-    printf("** Signals setup\n");
-
-    // setup addrinfo data structure
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_flags = AI_PASSIVE;
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = 0;
-
-    // initialize server_info data structure
-    status = getaddrinfo(NULL, PORT_NUM, &hints, &server_info);
-    if (status != 0) {
-        syslog(LOG_ERR, "getaddrinfo");
-        freeaddrinfo(server_info);
-        return -1;
-    }
-
-    // create socket
-    socket_num = socket(server_info->ai_family, server_info->ai_socktype, server_info->ai_protocol);
-    if (socket_num == -1) {
-        syslog(LOG_ERR, "socket");
-        return -1;
-    }
-
-    // reference: https://stackoverflow.com/questions/24194961/how-do-i-use-setsockoptso-reuseaddr
-    int optval = 1;
-    if (setsockopt(socket_num, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(int)) == -1) {
-        perror("setsockopt");
-        close(socket_num);
-        return -1;
-    }
-
-    printf("** socket() call\n");
-
-    // bind socket
-    status = bind(socket_num, server_info->ai_addr, server_info->ai_addrlen);
-    if (status != 0) {
-        syslog(LOG_ERR, "bind");
-        freeaddrinfo(server_info);
-        return -1;
-    }
-
-    freeaddrinfo(server_info);
-    printf("** bind() call\n");
-
     // listen on socket
     status = listen(socket_num, MAX_BACKLOG);
     if (status == -1) {
-        syslog(LOG_ERR, "listen");
+        perror("listen");
         return -1;
     }
     printf("** listen() call\n");
 
     // open file for writing
-    output_fd = open(OUTPUT_FILE_PATH, O_CREAT | O_APPEND | O_RDWR, S_IRWXU);
-    if (output_fd == -1) {
-        printf("open() failure\n");
+    file_fd = open(OUTPUT_FILE_PATH, O_CREAT | O_APPEND | O_RDWR, S_IRWXU);
+    if (file_fd == -1) {
+        perror("open");
         return -1;
     }
 
-    //char* str1 = "hello";
-    //write(output_fd, str1, 4);
-    //printf("Write tmp string\n");
-
-    // malloc receive buffer
+    /*// malloc receive buffer
     recv_buf = malloc(recv_buf_size * sizeof(char));
     if (recv_buf == NULL) {
         printf("malloc failure\n");
@@ -191,11 +182,123 @@ int main(int argc, char** argv) {
     if (send_buf == NULL) {
         printf("malloc failure\n");
         return -1;
-    }
+    }*/
 
     printf("** enter while loop\n");
 
-    // main loop
+    while (1) {
+
+        //char* send_buf;
+        //long send_buf_size = 0;
+        int num_bytes;
+
+        // accept connection from client
+        client_fd = accept(socket_num, (struct sockaddr*) &client_sockaddr, &client_addrlen);
+        if (client_fd == -1) {
+            printf("accept failure\n");
+            return -1;
+        }
+
+        // log IP to syslog
+        char* ip_addr = inet_ntoa(client_sockaddr.sin_addr);
+        syslog(LOG_DEBUG, "Accepted connection from %s\n", ip_addr);
+
+
+        long recv_buf_pos = 0;
+        long recv_buf_size = MAX_BUF_SIZE;
+        char* recv_buf = malloc(recv_buf_size * sizeof(char));
+        memset(recv_buf, '\0', recv_buf_size);
+
+        if (recv_buf == NULL) {
+            perror("malloc failure");
+            return -1;
+        }
+
+        // receive bytes
+        while (1) {
+            printf("\n** RECV\n");
+            num_bytes = recv(client_fd, recv_buf, recv_buf_size, 0);
+            if (num_bytes == -1) {
+                perror("recv");
+                return -1;
+            }
+            printf("Actual # Bytes: %d\n", num_bytes);
+            printf("Recv BUF: %s", recv_buf);
+
+            if ((num_bytes == 0) || (strchr(recv_buf, '\n') != NULL)) {
+                recv_buf_pos += num_bytes;
+                break;
+            }
+
+            if ((recv_buf_size - recv_buf_pos) < num_bytes) {
+                recv_buf_size += num_bytes;
+                recv_buf = realloc(recv_buf, recv_buf_size * sizeof(char));
+            }
+
+            //printf("A: %ld B: %d\n", recv_buf_pos, num_bytes);
+            recv_buf_pos += num_bytes;
+            //printf("A: %ld B: %d\n", recv_buf_pos, num_bytes);
+
+        }
+
+        printf("\n** WRITE\n");
+        // write to file
+        printf("Buf Pos: %ld\n", recv_buf_pos);
+        //lseek(file_fd, total_bytes, SEEK_SET);
+        //printf("^^^Lseek pos before write: %ld\n", total_bytes);
+        num_bytes = write(file_fd, recv_buf, recv_buf_pos);
+        if (num_bytes == -1) { // additional check here
+            perror("write");
+            return -1;
+        }
+        printf("Receive BUF: %s\n", recv_buf);
+        printf("Actual # Bytes: %d\n", num_bytes);
+
+        //close(file_fd);
+        //int new_fd = open(OUTPUT_FILE_PATH, O_CREAT | O_APPEND | O_RDWR, S_IRWXU);
+
+        long send_buf_size = recv_buf_size;
+        char* send_buf = malloc(send_buf_size * sizeof(char));
+        if (send_buf == NULL) {
+            perror("malloc failure");
+            return -1;
+        }
+        memset(send_buf, '\0', send_buf_size);
+
+        printf("\n** READ\n");
+        // read the file
+        printf("Expected # Bytes: %d\n", num_bytes);
+        //lseek(new_fd, 0, SEEK_CUR);
+        printf("****Lseek pos before read: %ld\n", total_bytes);
+        lseek(file_fd, total_bytes, SEEK_SET);
+        num_bytes = read(file_fd, send_buf, num_bytes);
+        total_bytes += num_bytes;
+        if (num_bytes == -1) {
+            perror("read");
+            return -1;
+        }
+        printf("Send BUF: %s\n", send_buf);
+        printf("Actual # Bytes: %d\n", num_bytes);
+
+
+        printf("\n** SEND\n");
+        // send data
+        printf("Expected # Bytes: %d\n", num_bytes);
+        num_bytes = send(client_fd, send_buf, num_bytes, 0);
+        if (num_bytes == -1) {
+            perror("send");
+            return -1;
+        }
+        printf("BUF: %s\n", send_buf);
+        printf("Actual # Bytes: %d\n", num_bytes);
+
+        close(client_fd);
+        syslog(LOG_DEBUG, "Closed connection");
+        printf("** Finished loop iteration**\n\n");
+
+    }
+
+    /*// main loop
     while (1) {
 
         // accept connection from client
@@ -245,7 +348,7 @@ int main(int argc, char** argv) {
         }
 
 
-        //file_size = lseek(output_fd, 0, SEEK_CUR);
+        //file_size = lseek(file_fd, 0, SEEK_CUR);
         //printf("File Size: %ld\n", file_size);
 
         // reallocate send buffer if smaller than receive buffer
@@ -263,7 +366,7 @@ int main(int argc, char** argv) {
         // write to file
         num_bytes = buf_pos;
         printf("Expected # Bytes: %d\n", num_bytes);
-        num_bytes = write(output_fd, recv_buf, num_bytes);
+        num_bytes = write(file_fd, recv_buf, num_bytes);
         printf("Receive BUF: %s\n", recv_buf);
         printf("Actual # Bytes: %d\n", num_bytes);
 
@@ -271,10 +374,14 @@ int main(int argc, char** argv) {
             printf("error writing bytes to file\n");
         }
 
+        close(file_fd);
+        int new_fd = open(OUTPUT_FILE_PATH, O_CREAT | O_APPEND | O_RDWR, S_IRWXU);
+
         printf("** READ\n");
         // read the file
         printf("Expected # Bytes: %d\n", num_bytes);
-        num_bytes = read(output_fd, send_buf, num_bytes);
+        //lseek(new_fd, 0, SEEK_CUR);
+        num_bytes = read(new_fd, send_buf, num_bytes);
         if (num_bytes == -1) {
             printf("read failure\n");
             return -1;
@@ -282,7 +389,7 @@ int main(int argc, char** argv) {
         printf("Send BUF: %s\n", send_buf);
         printf("Actual # Bytes: %d\n", num_bytes);
 
-        //lseek(output_fd, num_bytes, SEEK_CUR); // update file pos before next read
+        //lseek(file_fd, num_bytes, SEEK_CUR); // update file pos before next read
 
         // mask signals
         status = sigprocmask(SIG_BLOCK, &cur_set, &prev_set);
@@ -313,9 +420,12 @@ int main(int argc, char** argv) {
         close(client_fd);
         syslog(LOG_DEBUG, "Closed connection");
         printf("** Finished loop iteration**\n\n");
-    }
+    }*/
 
 
     closelog();
+    close(file_fd);
+    close(socket_num);
+
     return 0;
 }
