@@ -14,7 +14,7 @@
 #define PORT_NUM "9000"
 #define MAX_BACKLOG 10
 #define OUTPUT_FILE_PATH "/var/tmp/aesdsocketdata"
-#define MAX_BUF_SIZE 100
+#define HUNDRED_BYTES 100
 
 // global variables
 int socket_num;
@@ -36,18 +36,15 @@ void handle_signals(int sig_num) {
     }
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
 
-    printf("Hello world!\n");
+    printf("Starting server\n");
     int status;
     int daemon_flag = 0;
     struct addrinfo hints;
     struct addrinfo* server_info;
-
     struct sockaddr_in client_sockaddr;
     socklen_t client_addrlen = sizeof(struct sockaddr);
-
-    long total_bytes = 0;
 
     openlog(NULL, 0, LOG_USER);
 
@@ -68,12 +65,10 @@ int main(int argc, char** argv) {
 
     // setup signal masking (happens during recv and send)
     sigset_t cur_set;
-    //sigset_t prev_set;
+    sigset_t prev_set;
     sigemptyset(&cur_set);
     sigaddset(&cur_set, SIGINT);
     sigaddset(&cur_set, SIGTERM);
-
-    printf("** Signals setup\n");
 
     // setup addrinfo data structure
     memset(&hints, 0, sizeof(hints));
@@ -90,13 +85,14 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    // create socket
+	// create socket
     socket_num = socket(server_info->ai_family, server_info->ai_socktype, server_info->ai_protocol);
     if (socket_num == -1) {
         perror("socket");
         return -1;
     }
 
+    // code to avoid binding on same socket issue
     // reference: https://stackoverflow.com/questions/24194961/how-do-i-use-setsockoptso-reuseaddr
     int optval = 1;
     if (setsockopt(socket_num, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(int)) == -1) {
@@ -104,8 +100,6 @@ int main(int argc, char** argv) {
         close(socket_num);
         return -1;
     }
-
-    printf("** socket() call\n");
 
     // bind socket
     status = bind(socket_num, server_info->ai_addr, server_info->ai_addrlen);
@@ -116,9 +110,8 @@ int main(int argc, char** argv) {
     }
 
     freeaddrinfo(server_info);
-    printf("** bind() call\n");
 
-    // set up daemon
+	// set up daemon
     if (daemon_flag) {
         pid_t pid = fork();
 
@@ -143,7 +136,6 @@ int main(int argc, char** argv) {
 
             int dev_null_fd = open("/dev/null", O_RDWR);   
 
-            // necessary?
             dup2(dev_null_fd, STDIN_FILENO);
             dup2(dev_null_fd, STDOUT_FILENO);
             dup2(dev_null_fd, STDERR_FILENO);
@@ -153,279 +145,143 @@ int main(int argc, char** argv) {
             close(STDERR_FILENO);
         }
     }
-    printf("** Dameon setup\n");
 
-    // listen on socket
+	// listen on socket
     status = listen(socket_num, MAX_BACKLOG);
     if (status == -1) {
         perror("listen");
         return -1;
     }
-    printf("** listen() call\n");
-
-    // open file for writing
+	
+	// open file for writing
     file_fd = open(OUTPUT_FILE_PATH, O_CREAT | O_APPEND | O_RDWR, S_IRWXU);
     if (file_fd == -1) {
         perror("open");
         return -1;
     }
 
-    /*// malloc receive buffer
-    recv_buf = malloc(recv_buf_size * sizeof(char));
-    if (recv_buf == NULL) {
-        printf("malloc failure\n");
-        return -1;
-    }
+    int num_bytes;
+    char buf[HUNDRED_BYTES];
+	memset(buf, '\0', HUNDRED_BYTES); // clear buf
+	int send_buf_size = 0;
 
-    // malloc send buffer
-    send_buf = malloc(send_buf_size * sizeof(char));
-    if (send_buf == NULL) {
-        printf("malloc failure\n");
-        return -1;
-    }*/
-
-    printf("** enter while loop\n");
-
-    while (1) {
-
-        //char* send_buf;
-        //long send_buf_size = 0;
-        int num_bytes;
-
+	while (1) {
         // accept connection from client
         client_fd = accept(socket_num, (struct sockaddr*) &client_sockaddr, &client_addrlen);
         if (client_fd == -1) {
-            printf("accept failure\n");
+            perror("accept");
             return -1;
         }
 
-        // log IP to syslog
+		// log IP to syslog
         char* ip_addr = inet_ntoa(client_sockaddr.sin_addr);
         syslog(LOG_DEBUG, "Accepted connection from %s\n", ip_addr);
 
-
-        long recv_buf_pos = 0;
-        long recv_buf_size = MAX_BUF_SIZE;
-        char* recv_buf = malloc(recv_buf_size * sizeof(char));
-        memset(recv_buf, '\0', recv_buf_size);
-
+		int recv_buf_pos = 0;
+		long recv_buf_size = HUNDRED_BYTES;
+		
+		char* recv_buf = malloc(recv_buf_size * sizeof(char));
         if (recv_buf == NULL) {
             perror("malloc failure");
             return -1;
         }
 
-        // receive bytes
+        // mask signals
+        status = sigprocmask(SIG_BLOCK, &cur_set, &prev_set);
+        if (status == -1) {
+            printf("signal masking failed\n");
+        }
+
+        // receive data from client
+        // each loop iteration is 1 newline of input
         while (1) {
-            printf("\n** RECV\n");
-            num_bytes = recv(client_fd, recv_buf, recv_buf_size, 0);
+            // save up to 100 bytes into buf
+			num_bytes = recv(client_fd, buf, HUNDRED_BYTES, 0);
+
+            // exit loop on error
             if (num_bytes == -1) {
                 perror("recv");
                 return -1;
             }
-            printf("Actual # Bytes: %d\n", num_bytes);
-            printf("Recv BUF: %s", recv_buf);
 
-            if ((num_bytes == 0) || (strchr(recv_buf, '\n') != NULL)) {
-                recv_buf_pos += num_bytes;
-                break;
-            }
+			// check if allocated buf size is sufficient
+			if(recv_buf_pos + num_bytes > recv_buf_size) {
+				recv_buf_size += num_bytes;
+				recv_buf = realloc(recv_buf, recv_buf_size * sizeof(char));
+			}
+			
+			// copy buf to recv_buf
+			memcpy(recv_buf + recv_buf_pos, buf, num_bytes);
+			recv_buf_pos += num_bytes;
 
-            if ((recv_buf_size - recv_buf_pos) < num_bytes) {
-                recv_buf_size += num_bytes;
-                recv_buf = realloc(recv_buf, recv_buf_size * sizeof(char));
-            }
-
-            //printf("A: %ld B: %d\n", recv_buf_pos, num_bytes);
-            recv_buf_pos += num_bytes;
-            //printf("A: %ld B: %d\n", recv_buf_pos, num_bytes);
-
+            // exit loop if there was a new line character received
+			if(strchr(buf, '\n') != NULL)
+				break;
         }
 
-        printf("\n** WRITE\n");
-        // write to file
-        printf("Buf Pos: %ld\n", recv_buf_pos);
-        //lseek(file_fd, total_bytes, SEEK_SET);
-        //printf("^^^Lseek pos before write: %ld\n", total_bytes);
-        num_bytes = write(file_fd, recv_buf, recv_buf_pos);
-        if (num_bytes == -1) { // additional check here
-            perror("write");
-            return -1;
+        // unmask signals
+        status = sigprocmask(SIG_UNBLOCK, &prev_set, NULL);
+        if (status == -1) {
+            printf("signal unmasking failed\n");
         }
-        printf("Receive BUF: %s\n", recv_buf);
-        printf("Actual # Bytes: %d\n", num_bytes);
-
-        //close(file_fd);
-        //int new_fd = open(OUTPUT_FILE_PATH, O_CREAT | O_APPEND | O_RDWR, S_IRWXU);
-
-        long send_buf_size = recv_buf_size;
-        char* send_buf = malloc(send_buf_size * sizeof(char));
+		
+		// write new bytes to file
+		num_bytes = write(file_fd, recv_buf, recv_buf_pos);
+        printf("** Writing %d bytes\n", num_bytes);
+		if (num_bytes == -1 || num_bytes != recv_buf_pos) {
+			perror("write");
+			return -1;
+		}
+		
+		// go to start of file
+		lseek(file_fd, 0, SEEK_SET);
+		
+		// allocate memory for send buffer
+		send_buf_size += recv_buf_pos;
+		char* send_buf = malloc(send_buf_size * sizeof(char));
         if (send_buf == NULL) {
             perror("malloc failure");
             return -1;
         }
-        memset(send_buf, '\0', send_buf_size);
-
-        printf("\n** READ\n");
-        // read the file
-        printf("Expected # Bytes: %d\n", num_bytes);
-        //lseek(new_fd, 0, SEEK_CUR);
-        printf("****Lseek pos before read: %ld\n", total_bytes);
-        lseek(file_fd, total_bytes, SEEK_SET);
-        num_bytes = read(file_fd, send_buf, num_bytes);
-        total_bytes += num_bytes;
-        if (num_bytes == -1) {
-            perror("read");
-            return -1;
-        }
-        printf("Send BUF: %s\n", send_buf);
-        printf("Actual # Bytes: %d\n", num_bytes);
-
-
-        printf("\n** SEND\n");
-        // send data
-        printf("Expected # Bytes: %d\n", num_bytes);
-        num_bytes = send(client_fd, send_buf, num_bytes, 0);
-        if (num_bytes == -1) {
-            perror("send");
-            return -1;
-        }
-        printf("BUF: %s\n", send_buf);
-        printf("Actual # Bytes: %d\n", num_bytes);
-
-        close(client_fd);
-        syslog(LOG_DEBUG, "Closed connection");
-        printf("** Finished loop iteration**\n\n");
-
-    }
-
-    /*// main loop
-    while (1) {
-
-        // accept connection from client
-        client_fd = accept(socket_num, (struct sockaddr*) &client_sockaddr, &client_addrlen);
-        if (client_fd == -1) {
-            printf("accept failure\n");
-            return -1;
-        }
-
-        char* ip_addr = inet_ntoa(client_sockaddr.sin_addr);
-        syslog(LOG_DEBUG, "Accepted connection from %s\n", ip_addr);
+			
+		// read the ENTIRE file
+		num_bytes = read(file_fd, send_buf, send_buf_size);
+        printf("** Reading %d bytes\n", send_buf_size);
+		if (num_bytes == -1 || num_bytes != send_buf_size) {
+			perror("read");
+			return -1;
+		}
 
         // mask signals
         status = sigprocmask(SIG_BLOCK, &cur_set, &prev_set);
         if (status == -1) {
             printf("signal masking failed\n");
         }
-
-        // receive data
-        buf_pos = 0;
-        while ((num_bytes = recv(client_fd, recv_buf + buf_pos, recv_buf_size, 0)) > 0) {
-            
-            char* newline_ptr = strchr(recv_buf, '\n');
-            buf_pos += num_bytes;
-
-            // increase buffer size by 100 bytes
-            if (buf_pos >= recv_buf_size) {
-                recv_buf_size += BUF_SIZE;
-                recv_buf = realloc(recv_buf, recv_buf_size * sizeof(char));
-
-                if (recv_buf == NULL) {
-                    free(recv_buf);
-                    printf("realloc failure\n");
-                    return -1;
-                }
-            }
-
-            if (newline_ptr != NULL) {
-                break;
-            }
-        }
+		
+		// send data to the client
+		num_bytes = send(client_fd, send_buf, num_bytes, 0);
+		if (num_bytes == -1 || num_bytes != send_buf_size) {
+			perror("send");
+			return -1;
+		}
 
         // unmask signals
         status = sigprocmask(SIG_UNBLOCK, &prev_set, NULL);
         if (status == -1) {
             printf("signal unmasking failed\n");
         }
-
-
-        //file_size = lseek(file_fd, 0, SEEK_CUR);
-        //printf("File Size: %ld\n", file_size);
-
-        // reallocate send buffer if smaller than receive buffer
-        if (send_buf_size < recv_buf_size) {
-            send_buf_size = recv_buf_size;
-            send_buf = realloc(send_buf, send_buf_size * sizeof(char));
-            if (send_buf == NULL) {
-                free(send_buf);
-                printf("realloc failure\n");
-                return -1;
-            }
-        }
-
-        printf("** WRITE\n");
-        // write to file
-        num_bytes = buf_pos;
-        printf("Expected # Bytes: %d\n", num_bytes);
-        num_bytes = write(file_fd, recv_buf, num_bytes);
-        printf("Receive BUF: %s\n", recv_buf);
-        printf("Actual # Bytes: %d\n", num_bytes);
-
-        if (num_bytes != buf_pos) {
-            printf("error writing bytes to file\n");
-        }
-
-        close(file_fd);
-        int new_fd = open(OUTPUT_FILE_PATH, O_CREAT | O_APPEND | O_RDWR, S_IRWXU);
-
-        printf("** READ\n");
-        // read the file
-        printf("Expected # Bytes: %d\n", num_bytes);
-        //lseek(new_fd, 0, SEEK_CUR);
-        num_bytes = read(new_fd, send_buf, num_bytes);
-        if (num_bytes == -1) {
-            printf("read failure\n");
-            return -1;
-        }
-        printf("Send BUF: %s\n", send_buf);
-        printf("Actual # Bytes: %d\n", num_bytes);
-
-        //lseek(file_fd, num_bytes, SEEK_CUR); // update file pos before next read
-
-        // mask signals
-        status = sigprocmask(SIG_BLOCK, &cur_set, &prev_set);
-        if (status == -1) {
-            printf("signal masking failed\n");
-        }
-
-
-        printf("** SEND\n");
-        // send data
-        printf("Expected # Bytes: %d\n", num_bytes);
-        num_bytes = send(client_fd, send_buf, num_bytes, 0);
-        printf("BUF: %s\n", send_buf);
-        printf("Actual # Bytes: %d\n", num_bytes);
-        
-
-        if (num_bytes == -1) {
-            printf("send failure\n");
-            return -1;
-        }
-
-        // unmask signals
-        status = sigprocmask(SIG_UNBLOCK, &prev_set, NULL);
-        if (status == -1) {
-            printf("signal unmasking failed\n");
-        }
-
-        close(client_fd);
-        syslog(LOG_DEBUG, "Closed connection");
-        printf("** Finished loop iteration**\n\n");
-    }*/
-
-
-    closelog();
-    close(file_fd);
+		
+		free(send_buf);
+		free(recv_buf);
+		
+		close(client_fd);
+		syslog(LOG_DEBUG, "Closed connection from %s\n", ip_addr);
+		
+	}
+	
     close(socket_num);
-
-    return 0;
+	close(file_fd);
+	closelog();
+	
+	return 0;
 }
