@@ -36,7 +36,7 @@ void handle_signals(int sig_num) {
     }
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
 
     printf("Starting server\n");
     int status;
