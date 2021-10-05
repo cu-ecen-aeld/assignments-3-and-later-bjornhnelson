@@ -39,7 +39,7 @@ void handle_signals(int sig_num) {
 
 int main(int argc, char** argv) {
 
-    printf("Starting server\n");
+    printf("** Starting server **\n");
     int status;
     int daemon_flag = 0;
     struct addrinfo hints;
@@ -191,6 +191,7 @@ int main(int argc, char** argv) {
         status = sigprocmask(SIG_BLOCK, &cur_set, &prev_set);
         if (status == -1) {
             printf("signal masking failed\n");
+            return -1;
         }
 
         // receive data from client
@@ -224,11 +225,11 @@ int main(int argc, char** argv) {
         status = sigprocmask(SIG_UNBLOCK, &prev_set, NULL);
         if (status == -1) {
             printf("signal unmasking failed\n");
+            return -1;
         }
 		
 		// write new bytes to file
 		num_bytes = write(file_fd, recv_buf, recv_buf_pos);
-        printf("** Writing %d bytes\n", num_bytes);
 		if (num_bytes == -1 || num_bytes != recv_buf_pos) {
 			perror("write");
 			return -1;
@@ -247,7 +248,6 @@ int main(int argc, char** argv) {
 			
 		// read the ENTIRE file
 		num_bytes = read(file_fd, send_buf, send_buf_size);
-        printf("** Reading %d bytes\n", send_buf_size);
 		if (num_bytes == -1 || num_bytes != send_buf_size) {
 			perror("read");
 			return -1;
