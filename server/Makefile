@@ -10,4 +10,4 @@ aesdsocket: aesdsocket.c
 	${CROSS_COMPILE}${CC} ${CFLAGS} aesdsocket.c -o aesdsocket
 
 clean:
-	rm aesdsocket
+	rm -f aesdsocket
