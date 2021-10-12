@@ -172,13 +172,21 @@ void* thread_function(void* thread_data) {
     }
 
     // write new bytes to file
-    pthread_mutex_lock(&mutex);
+    if (pthread_mutex_lock(&mutex) != 0) {
+        perror("mutex lock error");
+        return NULL;
+    }
+
     num_bytes = write(file_fd, recv_buf, recv_buf_pos);
     if (num_bytes == -1 || num_bytes != recv_buf_pos) {
         perror("write");
         return NULL;
     }
-    pthread_mutex_unlock(&mutex);
+
+    if (pthread_mutex_unlock(&mutex) != 0) {
+        perror("mutex unlock error");
+        return NULL;
+    }
 
     // calculate total number of bytes in file
     status = lseek(file_fd, 0, SEEK_END);
@@ -204,13 +212,21 @@ void* thread_function(void* thread_data) {
     }
 
     // read the ENTIRE file
-    pthread_mutex_lock(&mutex);
+    if (pthread_mutex_lock(&mutex) != 0) {
+        perror("mutex lock error");
+        return NULL;
+    }
+
     num_bytes = read(file_fd, send_buf, send_buf_size);
     if (num_bytes == -1 || num_bytes != send_buf_size) {
         perror("read");
         return NULL;
     }
-    pthread_mutex_unlock(&mutex);
+
+    if (pthread_mutex_unlock(&mutex) != 0) {
+        perror("mutex unlock error");
+        return NULL;
+    }
 
     // mask signals
     status = sigprocmask(SIG_BLOCK, &cur_set, &prev_set);
