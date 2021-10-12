@@ -1,5 +1,4 @@
 CROSS_COMPILE=
-CC=gcc
 CFLAGS = -g -Wall -Werror
 LDFLAGS = -pthread -lrt
 
