@@ -279,7 +279,7 @@ void program_cleanup() {
 int main(int argc, char** argv) {
     int status;
     bool daemon_flag = false;
-    pid_t pid;
+    pid_t pid = 0;
 
     printf("** Starting server **\n");
 
