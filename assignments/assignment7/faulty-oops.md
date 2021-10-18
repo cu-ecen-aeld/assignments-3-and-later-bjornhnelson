@@ -70,4 +70,4 @@ Disassembly of section .text:
 ```
 
 # Objdump Analysis
-The disassembly shows that the assembly instruction at address 14 is `str	wzr, [x1]`. This attempts to store a value at location 0 (the value of x1 is 0). This virtual address location of 0x00 is not accessible, which is why the faulty kernel driver results in an oops message. In the C code within faulty_write, this corresponds to the line dereferencing a null pointer: `*(int *)0 = 0`.
+The disassembly shows that the assembly instruction at address 14 is `str	wzr, [x1]`. This attempts to store a value at location 0 (the value of x1 is 0). This virtual address location of 0x00 is not accessible due to rules of the operating system, which is why the faulty kernel driver results in an oops message. In the C code within faulty_write, this corresponds to the line dereferencing a null pointer: `*(int *)0 = 0`.
