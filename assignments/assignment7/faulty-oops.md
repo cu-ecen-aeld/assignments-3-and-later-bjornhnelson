@@ -48,7 +48,9 @@ Code: d2800001 d2800000 d503233f d50323bf (b900003f)
 ```
 
 # Oops Message Analysis
-Text goes here
+The cause of the kernel error is shown by the line `Unable to handle kernel NULL pointer dereference at virtual address 0000000000000000`. This indicates that a null pointer dereference of an incorrect pointer value was performed, also known as a page fault.
+
+The exact line of code where execution stopped is shown by the line `faulty_write+0x14/0x20 [faulty]`. This indicates that the program counter was halted at the assembly instruction at address 14 in the faulty_write function. Objdump can now be used to further diagnose the problem.
 
 # Objdump Output
 ```
@@ -68,4 +70,4 @@ Disassembly of section .text:
 ```
 
 # Objdump Analysis
-Text goes here
+The disassembly shows that the assembly instruction at address 14 is `str	wzr, [x1]`. This attempts to store a value at location 0 (the value of x1 is 0). This virtual address location of 0x00 is not accessible, which is why the faulty kernel driver results in an oops message. In the C code within faulty_write, this corresponds to the line dereferencing a null pointer: `*(int *)0 = 0`.
