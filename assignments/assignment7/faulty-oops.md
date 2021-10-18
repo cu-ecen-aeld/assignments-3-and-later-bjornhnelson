@@ -1,3 +1,5 @@
+# Oops Message from doing: echo “hello_world” > /dev/faulty
+'''
 Unable to handle kernel NULL pointer dereference at virtual address 0000000000000000
 Mem abort info:
   ESR = 0x96000045
@@ -43,3 +45,27 @@ Call trace:
  el0_sync+0x174/0x180
 Code: d2800001 d2800000 d503233f d50323bf (b900003f) 
 ---[ end trace f15292901caaa1ca ]---
+'''
+
+# Oops Message Analysis
+Text goes here
+
+# Objdump Output
+'''
+faulty.ko:     file format elf64-littleaarch64
+
+Disassembly of section .text:
+
+0000000000000000 <faulty_write>:
+   0:	d503245f 	bti	c
+   4:	d2800001 	mov	x1, #0x0                   	// #0
+   8:	d2800000 	mov	x0, #0x0                   	// #0
+   c:	d503233f 	paciasp
+  10:	d50323bf 	autiasp
+  14:	b900003f 	str	wzr, [x1]
+  18:	d65f03c0 	ret
+  1c:	d503201f 	nop
+'''
+
+# Objdump Analysis
+Text goes here
