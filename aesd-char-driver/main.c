@@ -76,6 +76,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 		if (cur_entry == NULL) {
 			goto exit;
 		}
+
 		bytes_read = cur_entry->size - entry_offset;
         if (count < bytes_read) {
             bytes_read = count;
@@ -140,9 +141,6 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 		dev_ptr->entry.buffptr = NULL;
 		dev_ptr->entry.size = 0;
 	}
-
-	//*f_pos = 0;
-
 
  exit:
     mutex_unlock(&dev_ptr->lock);
