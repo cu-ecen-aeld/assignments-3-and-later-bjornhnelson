@@ -19,8 +19,15 @@
 
 #define PORT_NUM "9000"
 #define MAX_BACKLOG 10
-#define OUTPUT_FILE_PATH "/var/tmp/aesdsocketdata"
 #define MAX_BUF 100
+
+#define USE_AESD_CHAR_DEVICE 1
+
+#ifdef USE_AESD_CHAR_DEVICE
+#define OUTPUT_FILE_PATH "/dev/aesdchar"
+#else
+#define OUTPUT_FILE_PATH "/var/tmp/aesdsocketdata"
+#endif
 
 // global variables
 int socket_num; // fd for socket
@@ -68,6 +75,7 @@ static inline void timespec_add(struct timespec* result, const struct timespec* 
 }
 
 void timer_thread() {
+    #ifndef USE_AESD_CHAR_DEVICE
     time_t rawtime;
     struct tm* info;
     char* buf = malloc(sizeof(char) * MAX_BUF);
@@ -104,6 +112,7 @@ void timer_thread() {
     }
 
     free(buf);
+    #endif
 }
 
 /* Activities per thread
@@ -115,6 +124,13 @@ void* thread_function(void* thread_data) {
 	struct thread_data* thread_info = (struct thread_data*) thread_data;
     int status;
     int num_bytes;
+
+    // open file for writing
+    file_fd = open(OUTPUT_FILE_PATH, O_RDWR | O_CREAT | O_TRUNC, 0666);
+    if (file_fd == -1) {
+        perror("open");
+        return NULL;
+    }
 
     char buf[MAX_BUF]; // initialize static buffer
     memset(buf, '\0', MAX_BUF); // clear buf
@@ -182,24 +198,10 @@ void* thread_function(void* thread_data) {
         perror("write");
         return NULL;
     }
+    int file_size = num_bytes;
 
     if (pthread_mutex_unlock(&mutex) != 0) {
         perror("mutex unlock error");
-        return NULL;
-    }
-
-    // calculate total number of bytes in file
-    status = lseek(file_fd, 0, SEEK_END);
-    if (status == -1) {
-        perror("lseek");
-        return NULL;
-    }
-    int file_size = status;
-
-    // reset pointer to beginning of file
-    status = lseek(file_fd, 0, SEEK_SET);
-    if (status == -1) {
-        perror("lseek");
         return NULL;
     }
 
@@ -254,6 +256,7 @@ void* thread_function(void* thread_data) {
     free(send_buf);
 
     close(client_fd);
+    close(file_fd);
     syslog(LOG_DEBUG, "Closed connection from %s\n", ip_addr);	   
     thread_info->complete_flag = true;
 
@@ -269,9 +272,11 @@ void program_cleanup() {
     close(file_fd);
     close(client_fd);
 
+    #ifndef USE_AESD_CHAR_DEVICE
     if (remove(OUTPUT_FILE_PATH) == -1) {
        perror("remove");
     }
+    #endif
     exit(EXIT_SUCCESS);
 }
 
@@ -397,13 +402,6 @@ int main(int argc, char** argv) {
     status = listen(socket_num, MAX_BACKLOG);
     if (status == -1) {
         perror("listen");
-        return -1;
-    }
-	
-	// open file for writing
-    file_fd = open(OUTPUT_FILE_PATH, O_CREAT | O_APPEND | O_RDWR, S_IRWXU);
-    if (file_fd == -1) {
-        perror("open");
         return -1;
     }
          	

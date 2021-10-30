@@ -10,8 +10,10 @@
 
 #ifdef __KERNEL__
 #include <linux/string.h>
+#include <linux/slab.h>
 #else
 #include <string.h>
+#include <stdlib.h>
 #endif
 
 #include "aesd-circular-buffer.h"
@@ -65,10 +67,13 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 * Any necessary locking must be handled by the caller
 * Any memory referenced in @param add_entry must be allocated by and/or must have a lifetime managed by the caller.
 */
-void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
+const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
+    const char* overwrite_ptr = NULL;
+
     // update read pos
     if (buffer->full) {
+        overwrite_ptr = buffer->entry[buffer->out_offs].buffptr;
         buffer->out_offs++;
         buffer->out_offs %= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
     }
@@ -83,6 +88,8 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     if (buffer->in_offs == buffer->out_offs) {
         buffer->full = true;
     }
+
+    return overwrite_ptr;
 }
 
 /**
@@ -91,4 +98,28 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
 void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)
 {
     memset(buffer,0,sizeof(struct aesd_circular_buffer));
+}
+
+extern void aesd_circular_buffer_free(struct aesd_circular_buffer *buffer) {
+
+    int buf_pos = buffer->out_offs;
+
+    // empty case
+    if (buffer->out_offs == buffer->in_offs && buffer->full == false) {
+        return;
+    }
+
+    do {
+        #ifdef __KERNEL__
+            kfree(buffer->entry[buf_pos].buffptr);
+        #else
+            free((char *)buffer->entry[buf_pos].buffptr);
+        #endif
+        buffer->entry[buf_pos].size = 0;
+        buf_pos++;
+        buf_pos %= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    } while (buf_pos != buffer->in_offs);
+
+    buffer->in_offs = 0;
+    buffer->out_offs = 0;
 }
